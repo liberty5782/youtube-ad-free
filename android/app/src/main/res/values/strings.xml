@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ad-Free Viewer</string>
+    <string name="title_activity_main">Ad-Free Viewer</string>
+    <string name="package_name">com.ytadfree.viewer</string>
+    <string name="custom_url_scheme">com.ytadfree.viewer</string>
+</resources>
