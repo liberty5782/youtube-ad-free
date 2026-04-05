@@ -1,0 +1,17 @@
+{
+  "name": "YouTube Ad-Free Viewer",
+  "short_name": "Ad-Free YT",
+  "description": "Watch YouTube videos without ads via Invidious and Piped",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#ff4444",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
