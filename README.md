@@ -9,7 +9,7 @@ Watch YouTube videos without ads via [Invidious](https://invidious.io) and [Pipe
 3. Tap the **"Install App"** button that appears in the header
 4. The app is added to your home screen and launches full-screen with no browser chrome
 
-> For local testing: `npx serve . -l 3000` then open `http://YOUR_LAN_IP:3000` in Chrome on your phone.
+> For local testing: `npx serve docs -l 3000` then open `http://YOUR_LAN_IP:3000` in Chrome on your phone.
 
 ---
 

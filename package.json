@@ -4,7 +4,7 @@
   "description": "YouTube Ad-Free Viewer — watch YouTube without ads via Invidious/Piped",
   "private": true,
   "scripts": {
-    "start": "npx serve www -l 3000",
+    "start": "npx serve docs -l 3000",
     "android:init": "npx cap add android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
