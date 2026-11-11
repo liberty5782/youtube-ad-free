@@ -2,12 +2,16 @@
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const INVIDIOUS_INSTANCES = [
-  'https://invidious.io',
+// Last-resort list, used only if the live instance directory can't be fetched.
+// Public instances come and go, so these may be dead; discovery below is the main path.
+const FALLBACK_INSTANCES = [
   'https://inv.nadeko.net',
-  'https://invidious.privacydev.net',
   'https://yt.cdaut.de',
+  'https://invidious.privacydev.net',
 ];
+const INSTANCE_DIRECTORY = 'https://api.invidious.io/instances.json?sort_by=health';
+const PROBE_TIMEOUT_MS = 5000;
+const LEGACY_BAD_INSTANCE = 'https://invidious.io'; // project website, not an instance
 
 const PIPED_INSTANCES = [
   'https://piped.kavin.rocks',
@@ -16,7 +20,7 @@ const PIPED_INSTANCES = [
 
 const DEFAULTS = {
   backend: 'invidious',
-  invidiousInstance: INVIDIOUS_INSTANCES[0],
+  invidiousInstance: '', // empty = auto-discover a working public instance
   autoplay: false,
 };
 
@@ -49,9 +53,8 @@ function parseVideoId(input) {
   return null;
 }
 
-function buildEmbedUrl(videoId, backend, autoplay) {
+function buildEmbedUrl(videoId, backend, autoplay, instance) {
   const ap = autoplay ? 1 : 0;
-  const instance = settings.invidiousInstance || INVIDIOUS_INSTANCES[0];
 
   switch (backend) {
     case 'piped': {
@@ -71,7 +74,9 @@ function buildEmbedUrl(videoId, backend, autoplay) {
 function loadSettings() {
   try {
     const stored = localStorage.getItem('ytadfree_settings');
-    return stored ? { ...DEFAULTS, ...JSON.parse(stored) } : { ...DEFAULTS };
+    const merged = stored ? { ...DEFAULTS, ...JSON.parse(stored) } : { ...DEFAULTS };
+    if (merged.invidiousInstance === LEGACY_BAD_INSTANCE) merged.invidiousInstance = '';
+    return merged;
   } catch {
     return { ...DEFAULTS };
   }
@@ -80,6 +85,56 @@ function loadSettings() {
 function saveSettings(s) {
   settings = s;
   localStorage.setItem('ytadfree_settings', JSON.stringify(s));
+}
+
+// ── Instance discovery ────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(url, ms = PROBE_TIMEOUT_MS) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function getCandidateInstances() {
+  const custom = settings.invidiousInstance ? [settings.invidiousInstance.replace(/\/$/, '')] : [];
+  let discovered = [];
+  try {
+    const cached = JSON.parse(localStorage.getItem('ytadfree_instances') || 'null');
+    if (cached && Date.now() - cached.at < 3600_000) {
+      discovered = cached.list;
+    } else {
+      const res = await fetchWithTimeout(INSTANCE_DIRECTORY, 8000);
+      const data = await res.json();
+      discovered = data
+        .map(([, info]) => info)
+        .filter((i) => i.type === 'https' && i.api === true && i.uri)
+        .map((i) => i.uri.replace(/\/$/, ''));
+      localStorage.setItem('ytadfree_instances', JSON.stringify({ at: Date.now(), list: discovered }));
+    }
+  } catch { /* directory unreachable: fall through to fallback list */ }
+  return [...new Set([...custom, ...discovered.slice(0, 8), ...FALLBACK_INSTANCES])];
+}
+
+// Resolve with the first instance whose API answers for this video.
+function probeInstance(base, videoId) {
+  return fetchWithTimeout(`${base}/api/v1/videos/${videoId}?fields=videoId`).then((r) => {
+    if (!r.ok) throw new Error(String(r.status));
+    return base;
+  });
+}
+
+async function findWorkingInstance(videoId) {
+  const candidates = await getCandidateInstances();
+  const batch = candidates.slice(0, 6);
+  try {
+    return await Promise.any(batch.map((b) => probeInstance(b, videoId)));
+  } catch {
+    return null;
+  }
 }
 
 // ── DOM Refs ──────────────────────────────────────────────────────────────────
@@ -107,34 +162,59 @@ const autoplayToggle = document.getElementById('autoplayToggle');
 
 // ── Core Logic ────────────────────────────────────────────────────────────────
 
-function showPlayer(videoId) {
+async function showPlayer(videoId) {
   currentVideoId = videoId;
-  const backend = backendSelect.value;
+  let backend = backendSelect.value;
+  const token = Symbol();
+  showPlayer.token = token; // ignore stale async results if the user navigates away
 
-  // Update meta links
   currentVideoIdEl.textContent = videoId;
   openOriginal.href = `https://www.youtube.com/watch?v=${videoId}`;
-  const invBase = (settings.invidiousInstance || INVIDIOUS_INSTANCES[0]).replace(/\/$/, '');
-  openInvidious.href = `${invBase}/watch?v=${videoId}`;
+  openInvidious.hidden = backend !== 'invidious';
 
-  // Show loading state
   playerPlaceholder.classList.remove('hidden');
+  setPlaceholder('Finding a working server…', true);
   videoFrame.src = '';
-
-  // Switch sections
   searchSection.hidden = true;
   playerSection.hidden = false;
-
-  // Load embed
-  const url = buildEmbedUrl(videoId, backend, settings.autoplay);
-  videoFrame.src = url;
-
-  videoFrame.onload = () => {
-    playerPlaceholder.classList.add('hidden');
-  };
-
-  // Scroll to top
   window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  let instance = null;
+  if (backend === 'invidious') {
+    instance = await findWorkingInstance(videoId);
+    if (showPlayer.token !== token) return;
+    if (instance) {
+      openInvidious.href = `${instance}/watch?v=${videoId}`;
+    } else {
+      // No Invidious instance answered: fall back so the user still gets a video.
+      backend = 'nocookie';
+      openInvidious.hidden = true;
+      setNotice('No ad-free server responded, so this is playing through YouTube and may show ads. Try again later or set your own instance in Settings.');
+    }
+  } else {
+    setNotice('');
+  }
+  if (backend === 'invidious') setNotice('');
+
+  videoFrame.onload = () => playerPlaceholder.classList.add('hidden');
+  videoFrame.src = buildEmbedUrl(videoId, backend, settings.autoplay, instance);
+}
+
+function setPlaceholder(text, spinner) {
+  playerPlaceholder.querySelector('p').textContent = text;
+  playerPlaceholder.querySelector('.loading-spinner').style.display = spinner ? '' : 'none';
+}
+
+function setNotice(text) {
+  let el = document.getElementById('playerNotice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'playerNotice';
+    el.className = 'player-notice';
+    document.querySelector('.player-wrapper').after(el);
+  }
+  el.textContent = text;
+  el.hidden = !text;
 }
 
 function showSearch() {
@@ -197,7 +277,7 @@ document.addEventListener('keydown', (e) => {
 saveSettingsBtn.addEventListener('click', () => {
   const newSettings = {
     backend: defaultBackendSel.value,
-    invidiousInstance: invidiousInstanceInput.value.trim() || INVIDIOUS_INSTANCES[0],
+    invidiousInstance: invidiousInstanceInput.value.trim(),
     autoplay: autoplayToggle.checked,
   };
   saveSettings(newSettings);
@@ -213,7 +293,6 @@ function openSettings() {
   invidiousInstanceInput.value = settings.invidiousInstance;
   autoplayToggle.checked = settings.autoplay;
   settingsModal.hidden = false;
-  settingsModal.focus?.();
 }
 
 function closeSettings() {

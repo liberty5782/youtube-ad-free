@@ -1,5 +1,5 @@
 // Service Worker — cache app shell for offline use
-const CACHE = 'ytadfree-v1';
+const CACHE = 'ytadfree-v2';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', (e) => {
